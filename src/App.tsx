@@ -275,7 +275,6 @@ export default function App() {
         top: position.y,
         background: `rgba(8, 8, 12, ${opacity})`,
         cursor: isDragging ? "grabbing" : "default",
-        pointerEvents: clickThrough ? "none" : "all",
       }}
     >
       {/* ── HEADER / DRAG HANDLE ── */}
@@ -396,10 +395,10 @@ export default function App() {
         </div>
       )}
 
-      {/* ── CLICK-THROUGH NOTICE ── */}
+      {/* ── STEALTH NOTICE ── */}
       {clickThrough && (
         <div className="stealth-notice">
-          👁️ Click-through ON — press 👁️ to regain control
+          👁️ Stealth ON — hidden from screen share · click 👁️ to turn off
         </div>
       )}
 

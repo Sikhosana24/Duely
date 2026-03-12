@@ -70,7 +70,7 @@ pub fn run() {
 #[tauri::command]
 fn toggle_clickthrough(window: tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
     window
-        .set_ignore_cursor_events(enabled)
+        .set_content_protected(enabled)
         .map_err(|e| e.to_string())
 }
 
