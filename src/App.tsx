@@ -261,7 +261,7 @@ export default function App() {
             } catch {}
           }}
         >
-          ↗
+          ↗ Open
         </button>
       </div>
     );

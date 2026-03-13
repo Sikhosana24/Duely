@@ -409,22 +409,31 @@ textarea {
 /* Minimized pill */
 .pill {
   position: fixed;
-  height: 36px;
-  padding: 0 10px;
+  height: 44px;
+  padding: 0 16px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(10, 10, 14, 0.80);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(10, 10, 14, 0.92);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
-  box-shadow: var(--shadow-2);
+  box-shadow: 0 0 12px rgba(99, 102, 241, 0.25), var(--shadow-2);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  animation: pill-glow 2s ease-in-out infinite;
+  cursor: grab;
+}
+
+@keyframes pill-glow {
+  0%, 100% { box-shadow: 0 0 12px rgba(99, 102, 241, 0.25), var(--shadow-2); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.45), var(--shadow-2); }
 }
 
 .pill-label {
-  font-size: 12px;
-  color: rgba(255,255,255,0.84);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  letter-spacing: 0.3px;
 }
 
 .live-dot {
@@ -436,11 +445,21 @@ textarea {
 }
 
 .pill-expand {
-  height: 24px;
-  width: 24px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
   border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  background: rgba(99, 102, 241, 0.18);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.pill-expand:hover {
+  background: rgba(99, 102, 241, 0.30);
+  transform: scale(1.05);
 }
 
 ::-webkit-scrollbar {
