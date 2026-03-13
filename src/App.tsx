@@ -10,6 +10,8 @@ const groq = new Groq({
 
 type Mode = "interview" | "coding" | "meeting" | "general";
 
+type Tone = "professional" | "casual" | "technical" | "assertive";
+
 const MODES: { id: Mode; label: string; emoji: string; prompt: string }[] = [
   {
     id: "interview",
@@ -78,6 +80,17 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [tone, setTone] = useState<Tone>("professional");
+  const [autoRespond, setAutoRespond] = useState(true);
+  const [silenceThresholdMs, setSilenceThresholdMs] = useState(4500);
+  const [lastSpeechAt, setLastSpeechAt] = useState<number | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const countdownTimerRef = useRef<number | null>(null);
+  const [isAutoReplyActive, setIsAutoReplyActive] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+  const [size, setSize] = useState({ width: 420, height: 420 });
+  const [resizeStart, setResizeStart] = useState({ x: 0, y: 0 });
+  const [resizeStartSize, setResizeStartSize] = useState({ width: 420, height: 420 });
 
   const responseRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -114,6 +127,7 @@ export default function App() {
       if (final) {
         setTranscript((prev) => prev + " " + final);
         setInput((prev) => (prev ? prev + " " + final : final).trim());
+        setLastSpeechAt(Date.now());
       }
     };
 
@@ -140,6 +154,69 @@ export default function App() {
       setListening(true);
       setTranscript("");
     }
+  };
+
+  // Auto-respond based on silence after speech
+  useEffect(() => {
+    if (!autoRespond || !listening) return;
+    const id = window.setInterval(() => {
+      if (!autoRespond || !listening || loading || countdown !== null) return;
+      if (!lastSpeechAt || !transcript.trim()) return;
+      const elapsed = Date.now() - lastSpeechAt;
+
+      // Simple question detection – only trigger if the recent snippet looks like a question
+      const recent = transcript.split(/\s+/).slice(-40).join(" ").trim();
+      const looksLikeQuestion =
+        recent.endsWith("?") ||
+        /\b(what|why|how|when|where|who|which|could you|can you|would you)\b/i.test(
+          recent
+        );
+
+      if (!looksLikeQuestion) return;
+
+      if (elapsed >= silenceThresholdMs) {
+        setCountdown(3);
+      }
+    }, 600);
+    return () => window.clearInterval(id);
+  }, [autoRespond, listening, lastSpeechAt, silenceThresholdMs, loading, countdown, transcript]);
+
+  // Countdown visual before auto-asking from transcript
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+    }
+    countdownTimerRef.current = window.setInterval(() => {
+      setCountdown((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          window.clearInterval(countdownTimerRef.current ?? undefined);
+          countdownTimerRef = { current: null } as any;
+          const recent = transcript.split(/\s+/).slice(-60).join(" ");
+          if (recent.trim()) {
+            setIsAutoReplyActive(true);
+            ask(recent.trim());
+          }
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      if (countdownTimerRef.current) {
+        window.clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
+      }
+    };
+  }, [countdown, transcript]);
+
+  const cancelCountdown = () => {
+    if (countdownTimerRef.current) {
+      window.clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setCountdown(null);
   };
 
   // Toggle click-through
@@ -176,6 +253,34 @@ export default function App() {
     };
   }, [isDragging, dragOffset]);
 
+  // Resizing from bottom-right corner
+  const onResizeMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (clickThrough) return;
+    setIsResizing(true);
+    setResizeStart({ x: e.clientX, y: e.clientY });
+    setResizeStartSize({ width: size.width, height: size.height });
+  };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isResizing) return;
+      const dx = e.clientX - resizeStart.x;
+      const dy = e.clientY - resizeStart.y;
+      setSize({
+        width: Math.max(320, resizeStartSize.width + dx),
+        height: Math.max(260, resizeStartSize.height + dy),
+      });
+    };
+    const onUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [isResizing, resizeStart, resizeStartSize]);
+
   const ask = async (overrideInput?: string) => {
     const query = (overrideInput || input).trim();
     if (!query || loading) return;
@@ -192,7 +297,10 @@ export default function App() {
       const messages = [
         {
           role: "system" as const,
-          content: currentMode.prompt + (context ? `\n\nUser context:\n${context}` : ""),
+          content:
+            currentMode.prompt +
+            `\n\nTone: ${tone.toUpperCase()}. Match this tone in wording.` +
+            (context ? `\n\nUser context:\n${context}` : ""),
         },
         ...newHistory.map((m) => ({ role: m.role, content: m.content })),
       ];
@@ -214,6 +322,137 @@ export default function App() {
       setHistory([...newHistory, { role: "assistant", content: full, timestamp: new Date() }]);
     } catch {
       setResponse("⚠️ Error connecting to Groq. Check your VITE_GROQ_API_KEY in .env");
+    } finally {
+      setLoading(false);
+      setIsAutoReplyActive(false);
+    }
+  };
+
+  const askFromTranscript = () => {
+    const recent = transcript.split(/\s+/).slice(-60).join(" ");
+    if (!recent.trim()) return;
+    ask(
+      `From this live conversation snippet, what should I say next?\n\n"${recent.trim()}"`
+    );
+  };
+
+  const refineLastResponse = async (mode: "shorter" | "longer" | "simpler" | "bolder") => {
+    if (!response.trim() || loading) return;
+    setLoading(true);
+    setShowHistory(false);
+    const instruction =
+      mode === "shorter"
+        ? "Rewrite the answer to be significantly shorter while preserving only the most important points."
+        : mode === "longer"
+        ? "Expand the answer with a bit more detail and helpful nuance, but stay focused."
+        : mode === "simpler"
+        ? "Rewrite the answer using simpler, clearer language for a non-expert."
+        : "Rewrite the answer to sound more confident, direct, and assertive while staying professional.";
+
+    try {
+      const stream = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        stream: true,
+        max_tokens: 600,
+        messages: [
+          {
+            role: "system" as const,
+            content: `You are refining a previous answer. Keep the same meaning, but apply this transformation: ${instruction}
+Tone: ${tone.toUpperCase()}.`,
+          },
+          { role: "user", content: response },
+        ],
+      });
+      let full = "";
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || "";
+        full += delta;
+        setResponse(full);
+      }
+      setHistory((prev) => [
+        ...prev,
+        { role: "assistant", content: full, timestamp: new Date() },
+      ]);
+    } catch {
+      setResponse("⚠️ Error while refining the answer.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateSummary = async () => {
+    if (!history.length || loading) return;
+    setLoading(true);
+    setShowHistory(false);
+    try {
+      const transcriptText = history
+        .map((m) => `${m.role === "user" ? "User" : "Duely"}: ${m.content}`)
+        .join("\n");
+      const stream = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        stream: true,
+        max_tokens: 700,
+        messages: [
+          {
+            role: "system" as const,
+            content: `You generate structured meeting notes and session summaries from transcripts.
+Tone: ${tone.toUpperCase()}.
+Output sections: 1) Key Points, 2) Decisions, 3) Action Items (with owners if obvious), 4) Risks / Open Questions, 5) Next Steps.`,
+          },
+          { role: "user", content: transcriptText.slice(-8000) },
+        ],
+      });
+      let full = "";
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || "";
+        full += delta;
+        setResponse(full);
+      }
+      setHistory((prev) => [
+        ...prev,
+        { role: "assistant", content: full, timestamp: new Date() },
+      ]);
+    } catch {
+      setResponse("⚠️ Error while generating summary.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateFollowupEmail = async () => {
+    if (!history.length || loading) return;
+    setLoading(true);
+    setShowHistory(false);
+    try {
+      const transcriptText = history
+        .map((m) => `${m.role === "user" ? "User" : "Duely"}: ${m.content}`)
+        .join("\n");
+      const stream = await groq.chat.completions.create({
+        model: "llama-3.3-70b-versatile",
+        stream: true,
+        max_tokens: 700,
+        messages: [
+          {
+            role: "system" as const,
+            content: `You write polished follow-up emails after meetings or interviews.
+Tone: ${tone.toUpperCase()}.
+Output: subject line suggestion, then email body. Be clear, concise, and outcome-focused.`,
+          },
+          { role: "user", content: transcriptText.slice(-8000) },
+        ],
+      });
+      let full = "";
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || "";
+        full += delta;
+        setResponse(full);
+      }
+      setHistory((prev) => [
+        ...prev,
+        { role: "assistant", content: full, timestamp: new Date() },
+      ]);
+    } catch {
+      setResponse("⚠️ Error while drafting follow-up email.");
     } finally {
       setLoading(false);
     }
@@ -239,6 +478,27 @@ export default function App() {
     setInput("");
     setTranscript("");
   };
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.code === "KeyM") {
+        e.preventDefault();
+        toggleListening();
+      } else if (e.ctrlKey && e.shiftKey && e.code === "KeyS") {
+        e.preventDefault();
+        askFromTranscript();
+      } else if (e.ctrlKey && e.shiftKey && e.code === "KeyA") {
+        e.preventDefault();
+        setAutoRespond((prev) => !prev);
+      } else if (e.key === "Escape" && countdown !== null) {
+        e.preventDefault();
+        cancelCountdown();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleListening, countdown]);
 
   // ── MINIMIZED PILL ──
   if (minimized) {
@@ -273,8 +533,10 @@ export default function App() {
       style={{
         left: position.x,
         top: position.y,
+        width: size.width,
+        height: size.height,
         background: `rgba(8, 8, 12, ${opacity})`,
-        cursor: isDragging ? "grabbing" : "default",
+        cursor: isDragging ? "grabbing" : isResizing ? "nwse-resize" : "default",
       }}
     >
       {/* ── HEADER / DRAG HANDLE ── */}
@@ -288,6 +550,26 @@ export default function App() {
           </span>
         </div>
         <div className="header-right">
+          {/* Tone selector */}
+          <select
+            className="tone-select"
+            value={tone}
+            onChange={(e) => setTone(e.target.value as Tone)}
+            title="Tone"
+          >
+            <option value="professional">Professional</option>
+            <option value="casual">Casual</option>
+            <option value="technical">Technical</option>
+            <option value="assertive">Assertive</option>
+          </select>
+          {/* Auto-respond toggle */}
+          <button
+            className={`icon-btn ${autoRespond ? "active-btn" : ""}`}
+            onClick={() => setAutoRespond((v) => !v)}
+            title="Toggle auto-respond from live transcript"
+          >
+            🤖
+          </button>
           {/* Mic toggle */}
           <button
             className={`icon-btn ${listening ? "active-btn" : ""}`}
@@ -395,6 +677,18 @@ export default function App() {
         </div>
       )}
 
+      {/* ── AUTO-RESPOND COUNTDOWN ── */}
+      {countdown !== null && (
+        <div className="auto-respond-bar">
+          <span>
+            {isAutoReplyActive ? "Auto-reply" : "Auto-respond"} in {countdown}…
+          </span>
+          <button className="icon-btn" onClick={cancelCountdown}>
+            ✖
+          </button>
+        </div>
+      )}
+
       {/* ── STEALTH NOTICE ── */}
       {clickThrough && (
         <div className="stealth-notice">
@@ -423,6 +717,20 @@ export default function App() {
           <button className="copy-btn" onClick={copyResponse}>
             {copied ? "✅ Copied!" : "📋 Copy"}
           </button>
+          <div className="refine-group">
+            <button className="mini-btn" onClick={() => refineLastResponse("shorter")}>
+              Shorter
+            </button>
+            <button className="mini-btn" onClick={() => refineLastResponse("longer")}>
+              Longer
+            </button>
+            <button className="mini-btn" onClick={() => refineLastResponse("simpler")}>
+              Simpler
+            </button>
+            <button className="mini-btn" onClick={() => refineLastResponse("bolder")}>
+              Bolder
+            </button>
+          </div>
           <span className="exchange-count">
             {Math.floor(history.length / 2)} exchanges · Shift+Enter for newline
           </span>
@@ -431,6 +739,17 @@ export default function App() {
 
       {/* ── INPUT AREA ── */}
       <div className="input-area">
+        <div className="quick-row">
+          <button className="quick-btn" onClick={askFromTranscript}>
+            💬 What should I say?
+          </button>
+          <button className="quick-btn" onClick={generateSummary}>
+            📝 Summary
+          </button>
+          <button className="quick-btn" onClick={generateFollowupEmail}>
+            ✉️ Follow-up email
+          </button>
+        </div>
         <textarea
           ref={inputRef}
           className="input-box"
