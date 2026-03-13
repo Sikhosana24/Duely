@@ -6,6 +6,7 @@ struct OverlayState {
     normal_size: Option<tauri::PhysicalSize<u32>>,
     normal_position: Option<tauri::PhysicalPosition<i32>>,
     pill_mode: bool,
+    stealth_enabled: bool,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -68,9 +69,15 @@ pub fn run() {
 }
 
 #[tauri::command]
-fn toggle_clickthrough(window: tauri::WebviewWindow, enabled: bool) -> Result<(), String> {
+fn toggle_clickthrough(
+    window: tauri::WebviewWindow,
+    enabled: bool,
+    state: tauri::State<'_, Mutex<OverlayState>>,
+) -> Result<(), String> {
+    let mut overlay = state.lock().map_err(|_| "Overlay state poisoned".to_string())?;
+    overlay.stealth_enabled = enabled;
     window
-        .set_ignore_cursor_events(enabled)
+        .set_content_protected(enabled)
         .map_err(|e| e.to_string())
 }
 
@@ -98,9 +105,11 @@ fn set_pill_mode(
             .map_err(|e| e.to_string())?;
     } else {
         overlay.pill_mode = false;
-        window
-            .set_content_protected(false)
-            .map_err(|e| e.to_string())?;
+        if !overlay.stealth_enabled {
+            window
+                .set_content_protected(false)
+                .map_err(|e| e.to_string())?;
+        }
         if let Some(size) = overlay.normal_size.take() {
             window
                 .set_size(tauri::Size::Physical(size))
