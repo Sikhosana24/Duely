@@ -98,7 +98,7 @@ fn set_pill_mode(
         overlay.normal_position = window.outer_position().ok();
         overlay.pill_mode = true;
         window
-            .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(56, 56)))
+            .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(200, 56)))
             .map_err(|e| e.to_string())?;
         window
             .set_content_protected(true)
